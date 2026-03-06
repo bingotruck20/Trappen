@@ -48,22 +48,22 @@
 </head>
 <body>
 
-    <h1>Duloxetin Protokol</h1>
+    <h1>Duloxetin Protokol (Hybrid Algoritme)</h1>
     
     <div class="card">
         <h2>Systemparametre</h2>
         <div class="config-grid">
             <div class="config-item">
-                <label>Dosis-kurve</label>
-                <div>90mg &rarr; 10% reduktion pr. trin</div>
+                <label>Fase 1: Fast-Track (>60mg)</label>
+                <div>Lineær reduktion. 14 dage pr. trin.</div>
             </div>
             <div class="config-item">
-                <label>Interval</label>
-                <div>4 uger (28 dage) pr. trin</div>
+                <label>Fase 2: Hyperbolsk (<60mg)</label>
+                <div>10% reduktion. 28 dage pr. trin.</div>
             </div>
             <div class="config-item">
-                <label>Enhedsdata</label>
-                <div>60mg kapsler &rarr; 30mg (84 perler)</div>
+                <label>Perle-data</label>
+                <div>30mg kapsel (STADA) = 84 perler</div>
             </div>
             <div class="config-item">
                 <label>Startdato for udtrapning</label>
@@ -91,18 +91,13 @@
     <button class="danger" onclick="clearData()">Slet Database</button>
 
 <script>
-    const START_DOSE = 90;
-    const REDUCTION_RATE = 0.90; 
     const BEADS_PER_30MG = 84;
+    const REDUCTION_RATE = 0.90; 
     const MIN_DOSE = 0.5;
-    const INTERVAL_DAYS = 28;
 
-    // Sæt dags dato som standard i inputfeltet
     document.getElementById('startDateInput').valueAsDate = new Date();
-
     let state = JSON.parse(localStorage.getItem('taperState')) || { schedule: [], completedSteps: [], notes: {}, startDate: null };
 
-    // Opdater datofeltet hvis der findes en gemt startdato
     if (state.startDate) {
         document.getElementById('startDateInput').value = state.startDate;
     }
@@ -115,7 +110,7 @@
 
     function getBeadInstruction(beadsToKeep) {
         if (beadsToKeep === 0) return "";
-        if (beadsToKeep === BEADS_PER_30MG) return "1 x 30mg intakt";
+        if (beadsToKeep === BEADS_PER_30MG) return "1x 30mg intakt";
         
         const beadsToRemove = BEADS_PER_30MG - beadsToKeep;
         if (beadsToRemove <= 42) {
@@ -125,33 +120,30 @@
         }
     }
 
-    function calculateStep(currentDose) {
-        let instruction = "";
-        if (currentDose > 60) {
-            let remainderMg = currentDose - 60;
-            let beadsToKeep = Math.round((remainderMg / 30) * BEADS_PER_30MG);
-            let beadStr = getBeadInstruction(beadsToKeep);
-            
-            if (beadsToKeep === BEADS_PER_30MG) instruction = "1x 60mg + 1x 30mg (Intakte)";
-            else if (beadsToKeep === 0) instruction = "1x 60mg intakt";
-            else instruction = `1x 60mg intakt + fra 30mg: ${beadStr}`;
-        } else {
-            let full30s = Math.floor(currentDose / 30);
-            let remainderMg = currentDose % 30;
-            let beadsToKeep = Math.round((remainderMg / 30) * BEADS_PER_30MG);
+    // Denne funktion bruges kun til den hyperbolske fase (< 60mg), hvor vi kun bruger 30mg kapsler
+    function calculateHyperbolicStep(currentDose) {
+        let full30s = Math.floor(currentDose / 30);
+        let remainderMg = currentDose % 30;
+        let beadsToKeep = Math.round((remainderMg / 30) * BEADS_PER_30MG);
 
-            if (beadsToKeep === BEADS_PER_30MG) {
-                instruction = `${full30s + 1}x 30mg intakt`;
-            } else {
-                let parts = [];
-                if (full30s > 0) parts.push(`${full30s}x 30mg intakt`);
-                let beadStr = getBeadInstruction(beadsToKeep);
-                if (beadStr) parts.push(`fra en 30mg: ${beadStr}`);
-                instruction = parts.length > 0 ? parts.join("<br> + ") : "0 mg";
-            }
+        if (beadsToKeep === BEADS_PER_30MG) {
+            full30s += 1;
+            beadsToKeep = 0;
         }
+
+        let instruction = "";
+        if (full30s > 0 && beadsToKeep === 0) {
+            instruction = `${full30s}x 30mg intakt`;
+        } else {
+            let parts = [];
+            if (full30s > 0) parts.push(`${full30s}x 30mg intakt`);
+            let beadStr = getBeadInstruction(beadsToKeep);
+            if (beadStr) parts.push(`fra én 30mg: ${beadStr}`);
+            instruction = parts.length > 0 ? parts.join("<br> + ") : "0 mg";
+        }
+        
         if (currentDose <= MIN_DOSE) instruction = "0 mg (Fuldt seponeret)";
-        return { dose: currentDose.toFixed(1), instruction: instruction };
+        return instruction;
     }
 
     function generateSchedule() {
@@ -161,17 +153,41 @@
         if (!baseDate) return alert("Vælg venligst en startdato.");
 
         let schedule = [];
-        let currentDose = START_DOSE;
+        let accumulatedDays = 0;
         
-        schedule.push({ step: 0, projectedDate: addDays(baseDate, 0), ...calculateStep(currentDose) });
+        // Trin 0: Baseline
+        schedule.push({ 
+            step: 0, projectedDate: addDays(baseDate, accumulatedDays), dose: "90.0", 
+            instruction: "1x 60mg + 1x 30mg (Begge intakte)" 
+        });
 
-        let stepCount = 1;
+        // Trin 1: Fast-Track (75mg)
+        accumulatedDays += 14;
+        schedule.push({ 
+            step: 1, projectedDate: addDays(baseDate, accumulatedDays), dose: "75.0", 
+            instruction: `1x 60mg intakt + fra 30mg: <span class="highlight">Fjern 42 perler</span>` 
+        });
+
+        // Trin 2: Fast-Track (60mg)
+        accumulatedDays += 14;
+        schedule.push({ 
+            step: 2, projectedDate: addDays(baseDate, accumulatedDays), dose: "60.0", 
+            instruction: "1x 60mg intakt (Stop med 30mg ekstra)" 
+        });
+
+        // Trin 3 og frem: Hyperbolsk (Startende fra 60 * 0.90 = 54mg)
+        let currentDose = 60.0;
+        let stepCount = 3;
+        
         while (currentDose > MIN_DOSE) {
             currentDose = currentDose * REDUCTION_RATE;
+            accumulatedDays += 28; // Skift til 28 dages interval
+            
             schedule.push({ 
                 step: stepCount, 
-                projectedDate: addDays(baseDate, stepCount * INTERVAL_DAYS),
-                ...calculateStep(currentDose) 
+                projectedDate: addDays(baseDate, accumulatedDays),
+                dose: currentDose.toFixed(1),
+                instruction: calculateHyperbolicStep(currentDose) 
             });
             stepCount++;
             if (stepCount > 60) break; 
