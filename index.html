@@ -11,12 +11,20 @@
         body {
             font-family: system-ui, -apple-system, sans-serif;
             background-color: var(--bg); color: var(--text);
-            max-width: 900px; margin: 0 auto; padding: 20px;
+            max-width: 1000px; margin: 0 auto; padding: 20px;
         }
         h1, h2 { color: var(--primary); }
         .card {
             background: var(--surface); padding: 20px; border-radius: 8px; margin-bottom: 20px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        .config-grid {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;
+        }
+        .config-item { display: flex; flex-direction: column; }
+        .config-item label { font-size: 0.9em; margin-bottom: 5px; color: #aaa; }
+        input[type="date"] {
+            padding: 8px; background: #2a2a2a; border: 1px solid #444; color: #fff; border-radius: 4px; color-scheme: dark;
         }
         table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.95em; }
         th, td { padding: 12px 8px; text-align: left; border-bottom: 1px solid #333; }
@@ -35,6 +43,7 @@
         button:hover { opacity: 0.8; }
         .danger { background: var(--error); color: white; margin-top: 20px; }
         .highlight { color: #ffeb3b; font-weight: bold; }
+        .date-col { font-family: monospace; font-size: 1.1em; }
     </style>
 </head>
 <body>
@@ -43,8 +52,24 @@
     
     <div class="card">
         <h2>Systemparametre</h2>
-        <p><strong>Dosis-kurve:</strong> 90mg start &rarr; 10% hyperbolsk reduktion</p>
-        <p><strong>Enhedsdata:</strong> 60mg kapsler indtil 60mg. Derefter 30mg kapsler á 84 perler.</p>
+        <div class="config-grid">
+            <div class="config-item">
+                <label>Dosis-kurve</label>
+                <div>90mg &rarr; 10% reduktion pr. trin</div>
+            </div>
+            <div class="config-item">
+                <label>Interval</label>
+                <div>4 uger (28 dage) pr. trin</div>
+            </div>
+            <div class="config-item">
+                <label>Enhedsdata</label>
+                <div>60mg kapsler &rarr; 30mg (84 perler)</div>
+            </div>
+            <div class="config-item">
+                <label>Startdato for udtrapning</label>
+                <input type="date" id="startDateInput">
+            </div>
+        </div>
         <button onclick="generateSchedule()">Generér / Nulstil Skema</button>
     </div>
 
@@ -53,9 +78,10 @@
             <thead>
                 <tr>
                     <th>Trin</th>
+                    <th>Planlagt Dato</th>
                     <th>Mål</th>
                     <th>Klinisk Instruktion</th>
-                    <th>Dato & Noter (Gemmes auto)</th>
+                    <th>Faktisk Dato & Noter</th>
                     <th>✓</th>
                 </tr>
             </thead>
@@ -69,15 +95,29 @@
     const REDUCTION_RATE = 0.90; 
     const BEADS_PER_30MG = 84;
     const MIN_DOSE = 0.5;
+    const INTERVAL_DAYS = 28;
 
-    let state = JSON.parse(localStorage.getItem('taperState')) || { schedule: [], completedSteps: [], notes: {} };
+    // Sæt dags dato som standard i inputfeltet
+    document.getElementById('startDateInput').valueAsDate = new Date();
+
+    let state = JSON.parse(localStorage.getItem('taperState')) || { schedule: [], completedSteps: [], notes: {}, startDate: null };
+
+    // Opdater datofeltet hvis der findes en gemt startdato
+    if (state.startDate) {
+        document.getElementById('startDateInput').value = state.startDate;
+    }
+
+    function addDays(dateString, days) {
+        let date = new Date(dateString);
+        date.setDate(date.getDate() + days);
+        return date.toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    }
 
     function getBeadInstruction(beadsToKeep) {
         if (beadsToKeep === 0) return "";
         if (beadsToKeep === BEADS_PER_30MG) return "1 x 30mg intakt";
         
         const beadsToRemove = BEADS_PER_30MG - beadsToKeep;
-        // Optimeret UX: Fjern hvis vi skal fjerne færre end vi skal tælle
         if (beadsToRemove <= 42) {
             return `<span class="highlight">Fjern ${beadsToRemove} perler</span> (behold resten)`;
         } else {
@@ -87,19 +127,14 @@
 
     function calculateStep(currentDose) {
         let instruction = "";
-        
         if (currentDose > 60) {
             let remainderMg = currentDose - 60;
             let beadsToKeep = Math.round((remainderMg / 30) * BEADS_PER_30MG);
             let beadStr = getBeadInstruction(beadsToKeep);
             
-            if (beadsToKeep === BEADS_PER_30MG) {
-                instruction = "1x 60mg + 1x 30mg (Intakte)";
-            } else if (beadsToKeep === 0) {
-                instruction = "1x 60mg intakt";
-            } else {
-                instruction = `1x 60mg intakt + fra 30mg: ${beadStr}`;
-            }
+            if (beadsToKeep === BEADS_PER_30MG) instruction = "1x 60mg + 1x 30mg (Intakte)";
+            else if (beadsToKeep === 0) instruction = "1x 60mg intakt";
+            else instruction = `1x 60mg intakt + fra 30mg: ${beadStr}`;
         } else {
             let full30s = Math.floor(currentDose / 30);
             let remainderMg = currentDose % 30;
@@ -115,29 +150,34 @@
                 instruction = parts.length > 0 ? parts.join("<br> + ") : "0 mg";
             }
         }
-
         if (currentDose <= MIN_DOSE) instruction = "0 mg (Fuldt seponeret)";
-
         return { dose: currentDose.toFixed(1), instruction: instruction };
     }
 
     function generateSchedule() {
         if(state.schedule.length > 0 && !confirm("Advarsel: Dette overskriver din eksisterende log. Fortsæt?")) return;
         
+        const baseDate = document.getElementById('startDateInput').value;
+        if (!baseDate) return alert("Vælg venligst en startdato.");
+
         let schedule = [];
         let currentDose = START_DOSE;
         
-        schedule.push({ step: 0, ...calculateStep(currentDose) });
+        schedule.push({ step: 0, projectedDate: addDays(baseDate, 0), ...calculateStep(currentDose) });
 
         let stepCount = 1;
         while (currentDose > MIN_DOSE) {
             currentDose = currentDose * REDUCTION_RATE;
-            schedule.push({ step: stepCount, ...calculateStep(currentDose) });
+            schedule.push({ 
+                step: stepCount, 
+                projectedDate: addDays(baseDate, stepCount * INTERVAL_DAYS),
+                ...calculateStep(currentDose) 
+            });
             stepCount++;
-            if (stepCount > 60) break; // Infinite loop beskyttelse
+            if (stepCount > 60) break; 
         }
         
-        state = { schedule: schedule, completedSteps: [], notes: {} };
+        state = { schedule: schedule, completedSteps: [], notes: {}, startDate: baseDate };
         saveState();
         renderTable();
     }
@@ -147,12 +187,10 @@
         if (idx > -1) state.completedSteps.splice(idx, 1);
         else state.completedSteps.push(stepIndex);
         
-        // Auto-indsæt dags dato hvis feltet er tomt når man krydser af
         if(idx === -1 && !state.notes[stepIndex]) {
-            const today = new Date().toLocaleDateString('da-DK');
-            state.notes[stepIndex] = `Startet: ${today}`;
+            const today = new Date().toLocaleDateString('da-DK', { day: '2-digit', month: '2-digit', year: 'numeric' });
+            state.notes[stepIndex] = `Udført: ${today}`;
         }
-        
         saveState();
         renderTable();
     }
@@ -169,7 +207,8 @@
     function clearData() {
         if(confirm("Slet alt permanent?")) {
             localStorage.removeItem('taperState');
-            state = { schedule: [], completedSteps: [], notes: {} };
+            state = { schedule: [], completedSteps: [], notes: {}, startDate: null };
+            document.getElementById('startDateInput').valueAsDate = new Date();
             renderTable();
         }
     }
@@ -177,7 +216,7 @@
     function renderTable() {
         const tbody = document.getElementById('tableBody');
         tbody.innerHTML = '';
-        if (state.schedule.length === 0) return tbody.innerHTML = '<tr><td colspan="5">Skema ikke genereret.</td></tr>';
+        if (state.schedule.length === 0) return tbody.innerHTML = '<tr><td colspan="6">Vælg startdato og tryk på Generér.</td></tr>';
 
         state.schedule.forEach((s) => {
             const isCompleted = state.completedSteps.includes(s.step);
@@ -186,9 +225,10 @@
             
             tr.innerHTML = `
                 <td><strong>${s.step}</strong></td>
+                <td class="date-col">${s.projectedDate}</td>
                 <td>${s.dose} mg</td>
                 <td class="instruction">${s.instruction}</td>
-                <td><input type="text" placeholder="Dato / Symptomer..." value="${state.notes[s.step] || ''}" onchange="updateNote(${s.step}, this.value)"></td>
+                <td><input type="text" placeholder="Faktisk dato / Bivirkninger..." value="${state.notes[s.step] || ''}" onchange="updateNote(${s.step}, this.value)"></td>
                 <td><input type="checkbox" onchange="toggleStep(${s.step})" ${isCompleted ? 'checked' : ''}></td>
             `;
             tbody.appendChild(tr);
