@@ -11,93 +11,122 @@
         body {
             font-family: system-ui, -apple-system, sans-serif;
             background-color: var(--bg); color: var(--text);
-            max-width: 800px; margin: 0 auto; padding: 20px;
+            max-width: 900px; margin: 0 auto; padding: 20px;
         }
         h1, h2 { color: var(--primary); }
         .card {
             background: var(--surface); padding: 20px; border-radius: 8px; margin-bottom: 20px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.3);
         }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #333; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.95em; }
+        th, td { padding: 12px 8px; text-align: left; border-bottom: 1px solid #333; }
         th { color: var(--primary); }
-        .completed { text-decoration: line-through; color: #888; }
+        .completed td { color: #888; }
+        .completed .instruction { text-decoration: line-through; }
         input[type="checkbox"] { transform: scale(1.5); cursor: pointer; }
+        input[type="text"] {
+            width: 100%; padding: 8px; background: #2a2a2a; border: 1px solid #444; 
+            color: #fff; border-radius: 4px; box-sizing: border-box;
+        }
         button {
             background: var(--primary); color: #000; border: none;
             padding: 10px 15px; border-radius: 4px; font-weight: bold; cursor: pointer;
         }
         button:hover { opacity: 0.8; }
         .danger { background: var(--error); color: white; margin-top: 20px; }
+        .highlight { color: #ffeb3b; font-weight: bold; }
     </style>
 </head>
 <body>
 
-    <h1>Duloxetin Udtrapning</h1>
+    <h1>Duloxetin Protokol</h1>
     
     <div class="card">
-        <h2>Parametre</h2>
-        <p><strong>Startdosis:</strong> 90 mg</p>
-        <p><strong>Reduktion:</strong> 10% hyperbolsk hver 4. uge</p>
-        <p><strong>Perler pr. 30 mg:</strong> 84 (Duloxetin STADA)</p>
+        <h2>Systemparametre</h2>
+        <p><strong>Dosis-kurve:</strong> 90mg start &rarr; 10% hyperbolsk reduktion</p>
+        <p><strong>Enhedsdata:</strong> 60mg kapsler indtil 60mg. Derefter 30mg kapsler á 84 perler.</p>
         <button onclick="generateSchedule()">Generér / Nulstil Skema</button>
     </div>
 
-    <div class="card">
-        <h2>Dit Forløb</h2>
+    <div class="card" style="overflow-x: auto;">
         <table id="scheduleTable">
             <thead>
                 <tr>
                     <th>Trin</th>
-                    <th>Måldosis</th>
-                    <th>Handling (Hele 30mg + Perler)</th>
-                    <th>Status</th>
+                    <th>Mål</th>
+                    <th>Klinisk Instruktion</th>
+                    <th>Dato & Noter (Gemmes auto)</th>
+                    <th>✓</th>
                 </tr>
             </thead>
-            <tbody id="tableBody">
-                </tbody>
+            <tbody id="tableBody"></tbody>
         </table>
     </div>
-    <button class="danger" onclick="clearData()">Slet al data</button>
+    <button class="danger" onclick="clearData()">Slet Database</button>
 
 <script>
     const START_DOSE = 90;
-    const REDUCTION_RATE = 0.90; // 10% reduktion
+    const REDUCTION_RATE = 0.90; 
     const BEADS_PER_30MG = 84;
-    const MIN_DOSE = 0.5; // Stop når dosis er under dette
+    const MIN_DOSE = 0.5;
 
-    // Load state from localStorage
-    let state = JSON.parse(localStorage.getItem('taperState')) || { schedule: [], completedSteps: [] };
+    let state = JSON.parse(localStorage.getItem('taperState')) || { schedule: [], completedSteps: [], notes: {} };
+
+    function getBeadInstruction(beadsToKeep) {
+        if (beadsToKeep === 0) return "";
+        if (beadsToKeep === BEADS_PER_30MG) return "1 x 30mg intakt";
+        
+        const beadsToRemove = BEADS_PER_30MG - beadsToKeep;
+        // Optimeret UX: Fjern hvis vi skal fjerne færre end vi skal tælle
+        if (beadsToRemove <= 42) {
+            return `<span class="highlight">Fjern ${beadsToRemove} perler</span> (behold resten)`;
+        } else {
+            return `<span class="highlight">Tæl ${beadsToKeep} perler</span> (kassér resten)`;
+        }
+    }
 
     function calculateStep(currentDose) {
-        let fullCapsules = Math.floor(currentDose / 30);
-        let remainderMg = currentDose % 30;
-        let beadsToKeep = Math.round((remainderMg / 30) * BEADS_PER_30MG);
+        let instruction = "";
         
-        // Hvis beads afrundes til 84, tæller det som en fuld kapsel
-        if (beadsToKeep === BEADS_PER_30MG) {
-            fullCapsules += 1;
-            beadsToKeep = 0;
+        if (currentDose > 60) {
+            let remainderMg = currentDose - 60;
+            let beadsToKeep = Math.round((remainderMg / 30) * BEADS_PER_30MG);
+            let beadStr = getBeadInstruction(beadsToKeep);
+            
+            if (beadsToKeep === BEADS_PER_30MG) {
+                instruction = "1x 60mg + 1x 30mg (Intakte)";
+            } else if (beadsToKeep === 0) {
+                instruction = "1x 60mg intakt";
+            } else {
+                instruction = `1x 60mg intakt + fra 30mg: ${beadStr}`;
+            }
+        } else {
+            let full30s = Math.floor(currentDose / 30);
+            let remainderMg = currentDose % 30;
+            let beadsToKeep = Math.round((remainderMg / 30) * BEADS_PER_30MG);
+
+            if (beadsToKeep === BEADS_PER_30MG) {
+                instruction = `${full30s + 1}x 30mg intakt`;
+            } else {
+                let parts = [];
+                if (full30s > 0) parts.push(`${full30s}x 30mg intakt`);
+                let beadStr = getBeadInstruction(beadsToKeep);
+                if (beadStr) parts.push(`fra en 30mg: ${beadStr}`);
+                instruction = parts.length > 0 ? parts.join("<br> + ") : "0 mg";
+            }
         }
 
-        let instruction = "";
-        if (fullCapsules > 0) instruction += `${fullCapsules} x 30mg intakt `;
-        if (beadsToKeep > 0) instruction += `+ ${beadsToKeep} perler`;
-        if (fullCapsules === 0 && beadsToKeep === 0) instruction = "0 mg (Helt ude)";
+        if (currentDose <= MIN_DOSE) instruction = "0 mg (Fuldt seponeret)";
 
-        return {
-            dose: currentDose.toFixed(1),
-            instruction: instruction.trim()
-        };
+        return { dose: currentDose.toFixed(1), instruction: instruction };
     }
 
     function generateSchedule() {
-        if(state.schedule.length > 0 && !confirm("Dette vil overskrive din nuværende fremgang. Er du sikker?")) return;
+        if(state.schedule.length > 0 && !confirm("Advarsel: Dette overskriver din eksisterende log. Fortsæt?")) return;
         
         let schedule = [];
         let currentDose = START_DOSE;
         
-        // Trin 0 (Baseline)
         schedule.push({ step: 0, ...calculateStep(currentDose) });
 
         let stepCount = 1;
@@ -105,23 +134,32 @@
             currentDose = currentDose * REDUCTION_RATE;
             schedule.push({ step: stepCount, ...calculateStep(currentDose) });
             stepCount++;
+            if (stepCount > 60) break; // Infinite loop beskyttelse
         }
         
-        state.schedule = schedule;
-        state.completedSteps = [];
+        state = { schedule: schedule, completedSteps: [], notes: {} };
         saveState();
         renderTable();
     }
 
     function toggleStep(stepIndex) {
         const idx = state.completedSteps.indexOf(stepIndex);
-        if (idx > -1) {
-            state.completedSteps.splice(idx, 1); // Fjern markering
-        } else {
-            state.completedSteps.push(stepIndex); // Tilføj markering
+        if (idx > -1) state.completedSteps.splice(idx, 1);
+        else state.completedSteps.push(stepIndex);
+        
+        // Auto-indsæt dags dato hvis feltet er tomt når man krydser af
+        if(idx === -1 && !state.notes[stepIndex]) {
+            const today = new Date().toLocaleDateString('da-DK');
+            state.notes[stepIndex] = `Startet: ${today}`;
         }
+        
         saveState();
         renderTable();
+    }
+
+    function updateNote(stepIndex, value) {
+        state.notes[stepIndex] = value;
+        saveState();
     }
 
     function saveState() {
@@ -129,9 +167,9 @@
     }
 
     function clearData() {
-        if(confirm("Er du sikker på at du vil slette alt?")) {
+        if(confirm("Slet alt permanent?")) {
             localStorage.removeItem('taperState');
-            state = { schedule: [], completedSteps: [] };
+            state = { schedule: [], completedSteps: [], notes: {} };
             renderTable();
         }
     }
@@ -139,30 +177,24 @@
     function renderTable() {
         const tbody = document.getElementById('tableBody');
         tbody.innerHTML = '';
-        
-        if (state.schedule.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4">Intet skema genereret endnu. Klik på knappen ovenfor.</td></tr>';
-            return;
-        }
+        if (state.schedule.length === 0) return tbody.innerHTML = '<tr><td colspan="5">Skema ikke genereret.</td></tr>';
 
         state.schedule.forEach((s) => {
             const isCompleted = state.completedSteps.includes(s.step);
-            const rowClass = isCompleted ? 'completed' : '';
-            const checked = isCompleted ? 'checked' : '';
-            
             const tr = document.createElement('tr');
-            tr.className = rowClass;
+            if(isCompleted) tr.className = 'completed';
+            
             tr.innerHTML = `
-                <td>Trin ${s.step}</td>
+                <td><strong>${s.step}</strong></td>
                 <td>${s.dose} mg</td>
-                <td><strong>${s.instruction}</strong></td>
-                <td><input type="checkbox" onchange="toggleStep(${s.step})" ${checked}></td>
+                <td class="instruction">${s.instruction}</td>
+                <td><input type="text" placeholder="Dato / Symptomer..." value="${state.notes[s.step] || ''}" onchange="updateNote(${s.step}, this.value)"></td>
+                <td><input type="checkbox" onchange="toggleStep(${s.step})" ${isCompleted ? 'checked' : ''}></td>
             `;
             tbody.appendChild(tr);
         });
     }
 
-    // Initial render
     renderTable();
 </script>
 </body>
